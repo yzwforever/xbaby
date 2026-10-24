@@ -41,6 +41,17 @@ jobs:
           python -m pip install -r requirements.txt
       - name: 准备配置
         run: cp config.actions.json config.json
+      - name: 密钥自检（只看有无，不显示内容）
+        env:
+          NEWSSTUDY_COS_SECRET_ID: ${{ secrets.NEWSSTUDY_COS_SECRET_ID }}
+          NEWSSTUDY_COS_SECRET_KEY: ${{ secrets.NEWSSTUDY_COS_SECRET_KEY }}
+          NEWSSTUDY_MODEL_API_KEY: ${{ secrets.NEWSSTUDY_MODEL_API_KEY }}
+          NEWSSTUDY_SERVERCHAN_SENDKEY: ${{ secrets.NEWSSTUDY_SERVERCHAN_SENDKEY }}
+        run: |
+          for v in NEWSSTUDY_MODEL_API_KEY NEWSSTUDY_SERVERCHAN_SENDKEY NEWSSTUDY_COS_SECRET_ID NEWSSTUDY_COS_SECRET_KEY; do
+            val="${!v}"
+            if [ -n "$val" ]; then echo "$v: 已配置（${#val} 字符）"; else echo "$v: 【空！未取到】"; fi
+          done
       - name: 测试推送（仅手动勾选时）
         if: github.event.inputs.test_push == 'true'
         env:
