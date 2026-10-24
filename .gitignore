@@ -7,6 +7,7 @@
 /logs/
 /runtime.json
 /backup_v1_before_actions.zip
+/data_local_backup/
 /day_sample.html
 __pycache__/
 *.pyc
