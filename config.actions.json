@@ -8,7 +8,7 @@
   "model_batch_size": 1,
   "pdf_host": "cos",
   "cos_region": "ap-shanghai",
-  "cos_bucket": "xwlb-daily-1253946648",
+  "cos_bucket": "xwlb-daily-1257930543",
   "link_hours": 72,
   "upload_enabled": true,
   "push_enabled": true,
