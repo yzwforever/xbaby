@@ -14,6 +14,10 @@ def text(value, limit=4000):
         raise ValueError('模型返回的文本为空、类型不符或过长')
     return value.strip()
 
+def canon(value):
+    """Collapse whitespace for quote matching: models reflow paragraphs and newlines."""
+    return re.sub(r'\s+', '', value)
+
 def validate_result(result, articles, profile):
     if not isinstance(result, dict) or not isinstance(result.get('items'), list):
         raise ValueError('模型未返回 items 列表')
@@ -47,8 +51,8 @@ def validate_result(result, articles, profile):
         for q in item['speeches']:
             excerpt = text(q.get('excerpt'), 1000)
             speaker = text(q.get('speaker'), 50)
-            if excerpt not in sources[aid]['text']:
-                raise ValueError('讲话摘录无法在原文中逐字匹配，拒绝生成报告')
+            if canon(excerpt) not in canon(sources[aid]['text']):
+                raise ValueError('讲话摘录无法在原文中逐字匹配（忽略空白后仍不一致），拒绝生成报告')
             if speaker not in excerpt:
                 raise ValueError('讲话摘录缺少说话者上下文')
             if q.get('kind') not in ('报道转述', '报道中的直接引语'):
@@ -73,7 +77,7 @@ def analyze(raw, config, secrets, log=print):
         log(f'AI 分析：{i+1} 至 {i+len(batch)} / {len(raw["articles"])} 条')
         messages = [{'role': 'system', 'content': system}, {'role': 'user', 'content': json.dumps(
             {'date': raw['date'], 'profile': profile, 'articles': batch}, ensure_ascii=False)}]
-        for attempt in range(2):
+        for attempt in range(3):
             response = post_json(config['model_base_url'].rstrip('/') + '/chat/completions', {
                 'model': config['model_name'], 'messages': messages, 'temperature': 0.2,
                 'max_tokens': int(config['model_max_tokens'])
@@ -87,9 +91,9 @@ def analyze(raw, config, secrets, log=print):
                 all_items.extend(validate_result(json.loads(content), batch, profile))
                 break
             except (KeyError, TypeError, ValueError, AttributeError) as e:
-                if attempt:
+                if attempt == 2:
                     raise RuntimeError('AI 输出未通过结构/引文校验，请重试或更换模型') from None
-                log('AI 输出未通过校验，要求重新生成这一组（会再次调用模型）')
+                log('AI 输出未通过校验（' + str(e)[:80] + '），要求重新生成这一组（会再次调用模型）')
                 messages.append({'role': 'user', 'content': '上次输出未通过校验，请重做本组，严格遵守JSON和引用规则。错误：' + str(e)[:120]})
     validate_result({'items': all_items}, raw['articles'], profile)
     return {'date': raw['date'], 'mode': 'ai', 'model': config['model_name'],

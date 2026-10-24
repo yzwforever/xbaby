@@ -90,6 +90,9 @@ class ParsingTests(unittest.TestCase):
 class ValidationTests(unittest.TestCase):
     def test_valid_quote(self):
         analysis.validate_result(result(),raw_news()['articles'],analysis.load_profile())
+    def test_quote_whitespace_difference_still_matches(self):
+        r=result(); r['items'][0]['speeches'][0]['excerpt']='习近平指出， 要坚持人民至上。'
+        analysis.validate_result(r,raw_news()['articles'],analysis.load_profile())
     def test_hallucinated_quote_rejected(self):
         r=result(); r['items'][0]['speeches'][0]['excerpt']='习近平指出，必定命中考试。'
         with self.assertRaises(ValueError): analysis.validate_result(r,raw_news()['articles'],analysis.load_profile())
