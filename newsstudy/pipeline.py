@@ -66,6 +66,36 @@ def make_reading(day, config, root=ROOT, log=print):
         log(f'原文阅读版已生成（未做AI分析，不会上传或推送）：{dest}')
         return dest
 
+def digest_markdown(result, raw):
+    """Full daily digest for the WeChat message body, so reading needs no PDF download."""
+    sources = {a['id']: a for a in raw['articles']}
+    topics = {t['id']: t for t in result['profile']['topics']}
+    out = ['**一、分点速读（按重要性排序）**']
+    for i, item in enumerate(result['items'], 1):
+        a = sources[item['id']]
+        badge = '重点' if item['importance'] >= 75 else '关注' if item['importance'] >= 50 else '速览'
+        sec = a.get('start_offset')
+        pos = f'（视频约 {sec // 60:02d}:{sec % 60:02d} 起）' if isinstance(sec, int) else ''
+        out.append(f"**{i:02} [{badge}] {a['title']}**{pos}")
+        out.extend('- ' + s for s in item['summary'])
+    speeches = [q for item in result['items'] for q in item['speeches']]
+    if speeches:
+        out.append('**二、讲话摘录与原理分析**')
+        for q in speeches:
+            excerpt = q['excerpt'] if len(q['excerpt']) <= 160 else q['excerpt'][:160] + '…'
+            out.append(f"> {q['speaker']}（{q['kind']}）：{excerpt}")
+            out.append('可能涉及：' + '；'.join(topics[t]['name'] for t in q['topic_ids']))
+            analysis = q['analysis'] if len(q['analysis']) <= 220 else q['analysis'][:220] + '…'
+            out.append(analysis)
+    studies = [(sources[item['id']]['title'], s) for item in result['items'] for s in item['study']]
+    if studies:
+        out.append('**三、考点关联与自拟练习**')
+        for title, s in studies:
+            out.append(f"- [{s['relevance']}相关·{s['track']}] {title}")
+            out.append(f"  - {s['reason']}")
+            out.append(f"  - {s['practice']}")
+    return '\n\n'.join(out)
+
 def push_pending(state, config, secrets, log):
     if not config['push_enabled']:
         return
@@ -98,7 +128,13 @@ def push_pending(state, config, secrets, log):
             backup = ''
             if repo_base and row['url'] != repo_base + f'/public/pdf/{row["day"]}.pdf':
                 backup = f'\n\n[备用直连（较慢）]({repo_base}/public/pdf/{row["day"]}.pdf)'
-            body.append(f'## {row["day"]} 新闻联播\n{highlights}\n\n[下载备考PDF]({row["url"]}){backup}\n\n[央视视频]({raw["video_url"]})\n\n{expiry}考试关联仅供复习。')
+            links = f'[下载备考PDF]({row["url"]}){backup}\n\n[央视视频]({raw["video_url"]})'
+            # 单日推送：正文直接内嵌完整日报，无需下载 PDF；补跑多日时用简版要点。
+            if len(batch) == 1 and len(digest_markdown(result, raw)) <= 26000:
+                content = digest_markdown(result, raw)
+            else:
+                content = highlights
+            body.append(f'## {row["day"]} 新闻联播\n\n{content}\n\n---\n\n{links}\n\n{expiry}考试关联仅供复习。')
             usable.append(row)
         if not usable:
             continue
