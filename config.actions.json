@@ -6,12 +6,11 @@
   "model_name": "deepseek-chat",
   "model_max_tokens": 8000,
   "model_batch_size": 1,
-  "pdf_host": "repo",
-  "repo_pdf_base_url": "",
+  "pdf_host": "cos",
+  "cos_region": "ap-shanghai",
+  "cos_bucket": "xwlb-daily-1253946648",
+  "link_hours": 72,
   "upload_enabled": true,
   "push_enabled": true,
-  "font_path": "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-  "cos_region": "",
-  "cos_bucket": "",
-  "link_hours": 72
+  "font_path": "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"
 }
