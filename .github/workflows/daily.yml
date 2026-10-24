@@ -69,6 +69,8 @@ jobs:
         env:
           NEWSSTUDY_MODEL_API_KEY: ${{ secrets.NEWSSTUDY_MODEL_API_KEY }}
           NEWSSTUDY_SERVERCHAN_SENDKEY: ${{ secrets.NEWSSTUDY_SERVERCHAN_SENDKEY }}
+          NEWSSTUDY_COS_SECRET_ID: ${{ secrets.NEWSSTUDY_COS_SECRET_ID }}
+          NEWSSTUDY_COS_SECRET_KEY: ${{ secrets.NEWSSTUDY_COS_SECRET_KEY }}
           NEWSSTUDY_REPO_PDF_BASE_URL: https://github.com/${{ github.repository }}/blob/HEAD
           NEWSSTUDY_REPO_CDN_BASE_URL: https://cdn.jsdelivr.net/gh/${{ github.repository }}@main
         run: |
