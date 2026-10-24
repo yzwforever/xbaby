@@ -13,6 +13,11 @@ on:
         description: '指定日期 YYYY-MM-DD（留空=自动补跑）'
         required: false
         default: ''
+      test_push:
+        description: '只发测试消息（不生成日报）'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -36,7 +41,30 @@ jobs:
           python -m pip install -r requirements.txt
       - name: 准备配置
         run: cp config.actions.json config.json
+      - name: 测试推送（仅手动勾选时）
+        if: github.event.inputs.test_push == 'true'
+        env:
+          KEYS: ${{ secrets.NEWSSTUDY_SERVERCHAN_SENDKEY }}
+        run: |
+          python - <<'EOF'
+          import os, sys
+          from newsstudy import delivery
+          keys = [k.strip() for k in os.environ.get('KEYS', '').split(',') if k.strip()]
+          if not keys:
+              print('未配置 NEWSSTUDY_SERVERCHAN_SENDKEY'); sys.exit(1)
+          failed = 0
+          for k in keys:
+              try:
+                  delivery.send_wechat('新闻联播日报·测试', '收到这条消息说明微信推送已配置成功。', k)
+                  print('OK:', k[:10] + '…')
+              except Exception as e:
+                  failed += 1
+                  print('FAIL:', k[:10] + '…', e)
+          print(f'共 {len(keys)} 个接收人，失败 {failed} 个')
+          sys.exit(1 if failed else 0)
+          EOF
       - name: 生成日报
+        if: github.event.inputs.test_push != 'true'
         id: run
         env:
           NEWSSTUDY_MODEL_API_KEY: ${{ secrets.NEWSSTUDY_MODEL_API_KEY }}
