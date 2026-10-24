@@ -36,8 +36,10 @@ def upload_pdf(path, day, config, secrets):
                            ContentDisposition=f'attachment; filename="newsstudy-{day}.pdf"')
         url = client.get_presigned_download_url(Bucket=config['cos_bucket'], Key=key,
                                                 Expired=int(config['link_hours'])*3600)
-    except Exception:
-        raise RuntimeError('COS 上传或生成链接失败，请检查区域、桶名、权限和网络；本地PDF不会丢失') from None
+    except Exception as e:
+        # COS SDK 的错误信息只含错误码/请求ID，不含密钥，可以安全记录用于排查
+        detail = f'{type(e).__name__}: {str(e)[:180]}'
+        raise RuntimeError(f'COS 上传或生成链接失败（{detail}）；本地PDF不会丢失') from None
     return url
 
 def send_wechat(title, body, sendkey):
