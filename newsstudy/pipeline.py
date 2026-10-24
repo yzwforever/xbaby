@@ -130,8 +130,10 @@ def push_pending(state, config, secrets, log):
                 backup = f'\n\n[备用直连（较慢）]({repo_base}/public/pdf/{row["day"]}.pdf)'
             links = f'[下载备考PDF]({row["url"]}){backup}\n\n[央视视频]({raw["video_url"]})'
             # 单日推送：正文直接内嵌完整日报，无需下载 PDF；补跑多日时用简版要点。
-            if len(batch) == 1 and len(digest_markdown(result, raw)) <= 26000:
-                content = digest_markdown(result, raw)
+            # Server酱正文上限约32KB（字节），中文每字3字节，按字节保守限制。
+            digest = digest_markdown(result, raw)
+            if len(batch) == 1 and len(digest.encode('utf-8')) <= 30000:
+                content = digest
             else:
                 content = highlights
             body.append(f'## {row["day"]} 新闻联播\n\n{content}\n\n---\n\n{links}\n\n{expiry}考试关联仅供复习。')
