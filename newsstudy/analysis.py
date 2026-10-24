@@ -54,7 +54,8 @@ def validate_result(result, articles, profile):
             if canon(excerpt) not in canon(sources[aid]['text']):
                 raise ValueError('讲话摘录无法在原文中逐字匹配（忽略空白后仍不一致），拒绝生成报告')
             if speaker not in excerpt:
-                raise ValueError('讲话摘录缺少说话者上下文')
+                raise ValueError('讲话摘录缺少说话者上下文：excerpt 必须逐字包含 speaker 的姓名；'
+                                 '扩大摘录范围到含姓名的句子，或删除该条 speeches 后重新输出')
             if q.get('kind') not in ('报道转述', '报道中的直接引语'):
                 raise ValueError('讲话类型不合法')
             if not isinstance(q.get('topic_ids'), list) or any(t not in topic_ids for t in q['topic_ids']):
