@@ -93,6 +93,8 @@ jobs:
       # 即使上一步失败也提交已完成的采集数据，下一轮触发时从这里续跑
       - name: 提交采集数据、状态与 PDF
         if: always()
+        env:
+          NEWSSTUDY_PUSH_PAT: ${{ secrets.NEWSSTUDY_PUSH_PAT }}
         run: |
           git config user.name "newsstudy-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -103,4 +105,10 @@ jobs:
           echo '--- 推送前状态 ---'
           git log --oneline -2
           git pull --no-rebase -q origin main || echo '拉取远端更新失败（继续尝试推送）'
-          git push || { echo '!!! git push 失败，错误已在上方输出 !!!'; git status -sb; exit 1; }
+          if [ -n "$NEWSSTUDY_PUSH_PAT" ]; then
+            echo '使用个人访问令牌推送'
+            git push "https://x-access-token:${NEWSSTUDY_PUSH_PAT}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main \
+              || { echo '!!! PAT 推送失败 !!!'; git status -sb; exit 1; }
+          else
+            git push || { echo '!!! 默认令牌推送失败（考虑配置 NEWSSTUDY_PUSH_PAT）!!!'; git status -sb; exit 1; }
+          fi
