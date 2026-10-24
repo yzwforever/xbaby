@@ -1,0 +1,61 @@
+name: daily
+
+# 路线A：GitHub Actions 全自动。每天北京时间 21:30 首跑，22:35/23:35 补跑
+#（当晚文字稿未上齐或首跑失败时自动补上；已完成的日期直接跳过，不重复调用模型）。
+on:
+  schedule:
+    - cron: '30 13 * * *'
+    - cron: '35 14 * * *'
+    - cron: '35 15 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '指定日期 YYYY-MM-DD（留空=自动补跑）'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-run
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 安装中文字体与依赖
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq fonts-wqy-microhei
+          python -m pip install -r requirements.txt
+      - name: 准备配置
+        run: cp config.actions.json config.json
+      - name: 生成日报
+        id: run
+        env:
+          NEWSSTUDY_MODEL_API_KEY: ${{ secrets.NEWSSTUDY_MODEL_API_KEY }}
+          NEWSSTUDY_SERVERCHAN_SENDKEY: ${{ secrets.NEWSSTUDY_SERVERCHAN_SENDKEY }}
+          NEWSSTUDY_REPO_PDF_BASE_URL: https://github.com/${{ github.repository }}/blob/HEAD
+        run: |
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            python -m newsstudy run --date "${{ github.event.inputs.date }}"
+          else
+            python -m newsstudy run
+          fi
+      # 即使上一步失败也提交已完成的采集数据，下一轮触发时从这里续跑
+      - name: 提交采集数据、状态与 PDF
+        if: always()
+        run: |
+          git config user.name "newsstudy-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f data output public || true
+          git reset -q data/run.lock || true
+          git diff --cached --quiet && echo '没有需要提交的变更' && exit 0
+          git commit -m "daily: $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git push

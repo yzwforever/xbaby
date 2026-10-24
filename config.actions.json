@@ -1,0 +1,16 @@
+{
+  "start_date": "2026-10-23",
+  "run_time": "21:30",
+  "max_days_per_run": 7,
+  "model_base_url": "",
+  "model_name": "",
+  "model_max_tokens": 14000,
+  "pdf_host": "repo",
+  "repo_pdf_base_url": "",
+  "upload_enabled": true,
+  "push_enabled": true,
+  "font_path": "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+  "cos_region": "",
+  "cos_bucket": "",
+  "link_hours": 72
+}

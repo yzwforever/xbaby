@@ -1,0 +1,9 @@
+* text=auto
+*.py text
+*.json text
+*.md text
+*.txt text
+*.cmd text
+*.ps1 text
+.github/workflows/*.yml text eol=lf
+*.pdf binary
