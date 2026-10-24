@@ -98,6 +98,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f data output public || true
           git reset -q data/run.lock || true
-          git diff --cached --quiet && echo '没有需要提交的变更' && exit 0
+          if git diff --cached --quiet; then echo '没有需要提交的变更'; exit 0; fi
           git commit -m "daily: $(date -u +'%Y-%m-%d %H:%M') UTC"
-          git push
+          echo '--- 推送前状态 ---'
+          git log --oneline -2
+          git pull --no-rebase -q origin main || echo '拉取远端更新失败（继续尝试推送）'
+          git push || { echo '!!! git push 失败，错误已在上方输出 !!!'; git status -sb; exit 1; }
