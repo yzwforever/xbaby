@@ -186,6 +186,12 @@ def run(root=ROOT, day=None, log=None):
                             expires = now()+timedelta(hours=int(config['link_hours']))
                             state.put(d, status='uploaded', url=url, expires=expires.isoformat(), error='')
                             log(d + ' PDF 已上传到私有存储')
+                except cctv.NotReady as e:
+                    # 文字稿晚间陆续发布属正常现象：留给后续触发轮次，不算失败。
+                    row = state.get(d)
+                    state.put(d, status=(row['status'] if row and row['status'] in ('rendered', 'uploaded') else 'pending'),
+                              error=str(e)[:240])
+                    log(d + ' 文字稿尚未齐全，本轮跳过，等待稍后自动补跑')
                 except Exception as e:
                     failed = True
                     # Avoid storing exception strings from third-party SDKs (credentials).

@@ -175,11 +175,11 @@ class PipelineTests(unittest.TestCase):
     def test_missing_api_does_not_fetch_or_mark_done(self):
         with patch('newsstudy.pipeline.load_secrets',return_value={}), patch('newsstudy.pipeline.collect') as fetch:
             self.assertFalse(pipeline.run(self.root,DAY,lambda s:None)); fetch.assert_not_called()
-    def test_missing_source_retries_and_notifies_nothing(self):
+    def test_missing_source_waits_quietly_and_notifies_nothing(self):
         with patch('newsstudy.pipeline.load_secrets',return_value=self.secrets), \
              patch('newsstudy.pipeline.collect',side_effect=cctv.NotReady('尚未齐全')), \
              patch('newsstudy.delivery.send_wechat') as send:
-            self.assertFalse(pipeline.run(self.root,DAY,lambda s:None)); send.assert_not_called()
+            self.assertTrue(pipeline.run(self.root,DAY,lambda s:None)); send.assert_not_called()
             state=State(self.root); self.assertEqual(state.get(DAY)['status'],'pending'); state.close()
     def test_repo_hosting_permanent_link_and_push(self):
         self.config.update({'pdf_host':'repo','repo_pdf_base_url':'https://github.com/u/r/blob/HEAD'})
