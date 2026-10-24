@@ -76,6 +76,7 @@ def analyze(raw, config, secrets, log=print):
     for i in range(0, len(raw['articles']), size):
         batch = raw['articles'][i:i+size]
         log(f'AI 分析：{i+1} 至 {i+len(batch)} / {len(raw["articles"])} 条')
+        batch_ids = ','.join(a['id'] for a in batch)
         messages = [{'role': 'system', 'content': system}, {'role': 'user', 'content': json.dumps(
             {'date': raw['date'], 'profile': profile, 'articles': batch}, ensure_ascii=False)}]
         for attempt in range(3):
@@ -93,8 +94,29 @@ def analyze(raw, config, secrets, log=print):
                 break
             except (KeyError, TypeError, ValueError, AttributeError) as e:
                 if attempt == 2:
+                    # 讲话类校验反复失败时降级：放弃本组讲话摘录，保住当日整期发布。
+                    # 原文讲话段落仍会以“候选存档”形式完整保留在 PDF 中。
+                    if '讲话' in str(e):
+                        log(batch_ids + ' 讲话校验三次未通过，降级为不含讲话摘录重新生成这一组')
+                        messages.append({'role': 'user', 'content':
+                            '讲话部分多次未通过校验。请重新输出本组完整JSON，'
+                            '把所有条目的 speeches 设为空数组 []，其余内容保持不变。'})
+                        response = post_json(config['model_base_url'].rstrip('/') + '/chat/completions', {
+                            'model': config['model_name'], 'messages': messages, 'temperature': 0.2,
+                            'max_tokens': int(config['model_max_tokens'])
+                        }, {'Authorization': 'Bearer ' + secrets['model_api_key']}, timeout=240)
+                        try:
+                            choice = response['choices'][0]
+                            if choice.get('finish_reason') not in (None, 'stop'):
+                                raise ValueError('模型输出被截断或未完成')
+                            content = re.sub(r'^```(?:json)?\s*|\s*```$', '',
+                                             choice['message']['content'].strip())
+                            all_items.extend(validate_result(json.loads(content), batch, profile))
+                            break
+                        except (KeyError, TypeError, ValueError, AttributeError):
+                            raise RuntimeError('AI 输出未通过校验（不含讲话的降级重试仍失败）') from None
                     raise RuntimeError('AI 输出未通过结构/引文校验，请重试或更换模型') from None
-                log('AI 输出未通过校验（' + str(e)[:80] + '），要求重新生成这一组（会再次调用模型）')
+                log(batch_ids + ' AI 输出未通过校验（' + str(e)[:80] + '），要求重新生成这一组（会再次调用模型）')
                 messages.append({'role': 'user', 'content': '上次输出未通过校验，请重做本组，严格遵守JSON和引用规则。错误：' + str(e)[:120]})
     validate_result({'items': all_items}, raw['articles'], profile)
     return {'date': raw['date'], 'mode': 'ai', 'model': config['model_name'],

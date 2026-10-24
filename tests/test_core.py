@@ -93,6 +93,16 @@ class ValidationTests(unittest.TestCase):
     def test_quote_whitespace_difference_still_matches(self):
         r=result(); r['items'][0]['speeches'][0]['excerpt']='习近平指出， 要坚持人民至上。'
         analysis.validate_result(r,raw_news()['articles'],analysis.load_profile())
+    def test_speech_failures_degrade_to_empty_speeches(self):
+        def resp(obj):
+            return {'choices':[{'finish_reason':'stop','message':{'content':json.dumps(obj,ensure_ascii=False)}}]}
+        bad=result(); bad['items'][0]['speeches'][0]['excerpt']='习近平指出，编造的引文。'
+        degraded=result(); degraded['items'][0]['speeches']=[]
+        config={**DEFAULT,'model_base_url':'https://fake.test/v1','model_name':'fake',
+                'model_max_tokens':100,'model_batch_size':1}
+        with patch('newsstudy.analysis.post_json',side_effect=[resp(bad),resp(bad),resp(bad),resp(degraded)]):
+            out=analysis.analyze(raw_news(),config,{'model_api_key':'k'},lambda s:None)
+        self.assertEqual(out['items'][0]['speeches'],[])
     def test_hallucinated_quote_rejected(self):
         r=result(); r['items'][0]['speeches'][0]['excerpt']='习近平指出，必定命中考试。'
         with self.assertRaises(ValueError): analysis.validate_result(r,raw_news()['articles'],analysis.load_profile())
