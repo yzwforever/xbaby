@@ -109,59 +109,48 @@ def push_pending(state, config, secrets, log):
         log('待配置微信 SendKey，已保留本地报告和上传记录')
         return
     eligible = [r for r in reversed(state.all()) if r['status'] == 'uploaded' and r['notified'] == 0]
-    # Small combined notifications: backfills don't create one message per news item.
-    for start in range(0, len(eligible), 3):
-        batch = eligible[start:start+3]
-        body = []
-        usable = []
-        for row in batch:
-            # COS 链接带过期时间，临期则跳过等重签；仓库托管链接 expires 为空=长期有效。
-            expired = bool(row['expires']) and datetime.fromisoformat(row['expires']) <= now()+timedelta(minutes=10)
-            if expired:
-                log(row['day'] + ' 下载链接已过期，等待下一轮重新签名')
-                continue
-            result = json.loads((Path(row['pdf']).parent / 'analysis.json').read_text(encoding='utf-8'))
-            raw = json.loads((Path(row['pdf']).parent / 'source.json').read_text(encoding='utf-8'))
-            titles = {a['id']: a['title'] for a in raw['articles']}
-            starts = {a['id']: a.get('start_offset') for a in raw['articles']}
-            def _with_pos(aid):
-                sec = starts.get(aid)
-                return titles[aid] + (f'（视频约 {sec // 60:02d}:{sec % 60:02d} 起）' if isinstance(sec, int) else '')
-            highlights = '\n'.join('- ' + _with_pos(i['id']) for i in result['items'][:3])
-            expiry = (f'链接有效至 {row["expires"][:16]}（北京时间）。' if row['expires']
-                      else 'PDF 链接由仓库长期提供。')
-            repo_base = (config.get('repo_pdf_base_url') or '').rstrip('/')
-            backup = ''
-            if repo_base and row['url'] != repo_base + f'/public/pdf/{row["day"]}.pdf':
-                backup = f'\n\n[备用直连（较慢）]({repo_base}/public/pdf/{row["day"]}.pdf)'
-            links = f'[下载备考PDF]({row["url"]}){backup}\n\n[央视视频]({raw["video_url"]})'
-            # 单日推送：正文直接内嵌完整日报，无需下载 PDF；补跑多日时用简版要点。
-            # Server酱正文上限约32KB（字节），中文每字3字节，按字节保守限制。
-            digest = digest_markdown(result, raw)
-            if len(batch) == 1 and len(digest.encode('utf-8')) <= 30000:
-                content = digest
-            else:
-                content = highlights
-            body.append(f'## {row["day"]} 新闻联播\n\n{content}\n\n---\n\n{links}\n\n{expiry}考试关联仅供复习。')
-            usable.append(row)
-        if not usable:
+    # 每天单独一条完整日报消息。Server酱免费额度每人每天5条：单轮最多补发4天，其余下一轮触发再发。
+    for row in eligible[:4]:
+        # COS 链接带过期时间，临期则跳过等重签；仓库托管链接 expires 为空=长期有效。
+        expired = bool(row['expires']) and datetime.fromisoformat(row['expires']) <= now()+timedelta(minutes=10)
+        if expired:
+            log(row['day'] + ' 下载链接已过期，等待下一轮重新签名')
             continue
-        days = [r['day'] for r in usable]
+        folder = Path(row['pdf']).parent
+        result = json.loads((folder / 'analysis.json').read_text(encoding='utf-8'))
+        raw = json.loads((folder / 'source.json').read_text(encoding='utf-8'))
+        titles = {a['id']: a['title'] for a in raw['articles']}
+        starts = {a['id']: a.get('start_offset') for a in raw['articles']}
+        def _with_pos(aid):
+            sec = starts.get(aid)
+            return titles[aid] + (f'（视频约 {sec // 60:02d}:{sec % 60:02d} 起）' if isinstance(sec, int) else '')
+        highlights = '\n'.join('- ' + _with_pos(i['id']) for i in result['items'][:3])
+        expiry = (f'链接有效至 {row["expires"][:16]}（北京时间）。' if row['expires']
+                  else 'PDF 链接由仓库长期提供。')
+        repo_base = (config.get('repo_pdf_base_url') or '').rstrip('/')
+        backup = ''
+        if repo_base and row['url'] != repo_base + f'/public/pdf/{row["day"]}.pdf':
+            backup = f'\n\n[备用直连（较慢）]({repo_base}/public/pdf/{row["day"]}.pdf)'
+        links = f'[下载备考PDF]({row["url"]}){backup}\n\n[央视视频]({raw["video_url"]})'
+        # 正文直接内嵌完整日报，无需下载 PDF；超长时退回要点简版。
+        # Server酱正文上限约32KB（字节），中文每字3字节，按字节保守限制。
+        digest = digest_markdown(result, raw)
+        content = digest if len(digest.encode('utf-8')) <= 30000 else highlights
+        body = (f'## {row["day"]} 新闻联播\n\n{content}\n\n---\n\n{links}\n\n'
+                f'{expiry}考试关联仅供复习。')
+        title = f'新闻联播备考日报 | {row["day"]}'
         # Persist ambiguity BEFORE network. If process dies after server accepted,
         # user resolves status; do not silently duplicate external messages.
         cur = state.db.execute('INSERT INTO outbox(days,status,updated) VALUES(?,?,?)',
-                               (json.dumps(days), 'uncertain', now().isoformat()))
+                               (json.dumps([row['day']]), 'uncertain', now().isoformat()))
         oid = cur.lastrowid
-        for d in days:
-            state.db.execute('UPDATE days SET notified=2 WHERE day=?', (d,))
+        state.db.execute('UPDATE days SET notified=2 WHERE day=?', (row['day'],))
         state.db.commit()
         try:
-            title = f'新闻联播备考日报 | {days[-1]}' + (f' 等{len(days)}期' if len(days) > 1 else '')
-            content = '\n\n---\n\n'.join(body)
             failed = 0
             for key in keys:
                 try:
-                    delivery.send_wechat(title, content, key)
+                    delivery.send_wechat(title, body, key)
                 except Exception:
                     failed += 1
             if failed:
@@ -170,10 +159,9 @@ def push_pending(state, config, secrets, log):
             log('推送结果待核对：请查看手机或Server酱后台，再在界面选择“已收到”或“允许重试”。批次 ' + str(oid))
             continue
         state.db.execute('UPDATE outbox SET status=?,updated=? WHERE id=?', ('sent', now().isoformat(), oid))
-        for d in days:
-            state.db.execute('UPDATE days SET notified=1 WHERE day=?', (d,))
+        state.db.execute('UPDATE days SET notified=1 WHERE day=?', (row['day'],))
         state.db.commit()
-        log('微信服务已接受推送（' + str(len(keys)) + ' 个接收人）：' + '、'.join(days))
+        log('微信服务已接受推送（' + str(len(keys)) + ' 个接收人）：' + row['day'])
 
 def resolve_notifications(root, received):
     state = State(root)
