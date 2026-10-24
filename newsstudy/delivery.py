@@ -6,7 +6,9 @@ from .net import post_json
 from .settings import ROOT
 
 def publish_repo_pdf(path, day, config, root=ROOT):
-    """Copy the PDF into the repo's public/ folder; the automation commits it and the link is permanent."""
+    """Copy the PDF into the repo's public/ folder; the automation commits it and the link is permanent.
+
+    Returns the CDN link when configured (faster in mainland China), else the GitHub link."""
     base = config.get('repo_pdf_base_url') or ''
     if not base:
         raise RuntimeError('未配置仓库 PDF 基础链接（config 或 NEWSSTUDY_REPO_PDF_BASE_URL）')
@@ -15,7 +17,8 @@ def publish_repo_pdf(path, day, config, root=ROOT):
     tmp = dest.with_suffix('.pdf.tmp')
     shutil.copyfile(path, tmp)
     os.replace(tmp, dest)
-    return base.rstrip('/') + f'/public/pdf/{day}.pdf'
+    cdn = (config.get('repo_cdn_base_url') or '').rstrip('/')
+    return (cdn if cdn else base.rstrip('/')) + f'/public/pdf/{day}.pdf'
 
 def upload_pdf(path, day, config, secrets):
     if not all((config['cos_region'], config['cos_bucket'], secrets.get('cos_secret_id'), secrets.get('cos_secret_key'))):

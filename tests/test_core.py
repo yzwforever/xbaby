@@ -192,7 +192,8 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue(pipeline.run(self.root,DAY,lambda s:None)); send.assert_not_called()
             state=State(self.root); self.assertEqual(state.get(DAY)['status'],'pending'); state.close()
     def test_repo_hosting_permanent_link_and_push(self):
-        self.config.update({'pdf_host':'repo','repo_pdf_base_url':'https://github.com/u/r/blob/HEAD'})
+        self.config.update({'pdf_host':'repo','repo_pdf_base_url':'https://github.com/u/r/blob/HEAD',
+                            'repo_cdn_base_url':'https://cdn.jsdelivr.net/gh/u/r@main'})
         atomic_json(self.root/'config.json',self.config)
         sent=[]
         def capture(title, body, sendkey):
@@ -210,9 +211,10 @@ class PipelineTests(unittest.TestCase):
             self.assertIn('长期提供',sent[0])
             self.assertTrue((self.root/'public/pdf/2026-10-22.pdf').exists())
             state=State(self.root); row=state.get(DAY); state.close()
-            self.assertEqual(row['url'],'https://github.com/u/r/blob/HEAD/public/pdf/2026-10-22.pdf')
+            self.assertEqual(row['url'],'https://cdn.jsdelivr.net/gh/u/r@main/public/pdf/2026-10-22.pdf')
             self.assertEqual(row['expires'],'')
             self.assertEqual(row['notified'],1)
+            self.assertIn('备用直连',sent[0])
             with patch('newsstudy.delivery.publish_repo_pdf') as republish:
                 pipeline.run(self.root,DAY,lambda s:None)
                 republish.assert_not_called()

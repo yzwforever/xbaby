@@ -94,7 +94,11 @@ def push_pending(state, config, secrets, log):
             highlights = '\n'.join('- ' + _with_pos(i['id']) for i in result['items'][:3])
             expiry = (f'链接有效至 {row["expires"][:16]}（北京时间）。' if row['expires']
                       else 'PDF 链接由仓库长期提供。')
-            body.append(f'## {row["day"]} 新闻联播\n{highlights}\n\n[下载备考PDF]({row["url"]})\n\n[央视视频]({raw["video_url"]})\n\n{expiry}考试关联仅供复习。')
+            repo_base = (config.get('repo_pdf_base_url') or '').rstrip('/')
+            backup = ''
+            if repo_base and row['url'] != repo_base + f'/public/pdf/{row["day"]}.pdf':
+                backup = f'\n\n[备用直连（较慢）]({repo_base}/public/pdf/{row["day"]}.pdf)'
+            body.append(f'## {row["day"]} 新闻联播\n{highlights}\n\n[下载备考PDF]({row["url"]}){backup}\n\n[央视视频]({raw["video_url"]})\n\n{expiry}考试关联仅供复习。')
             usable.append(row)
         if not usable:
             continue

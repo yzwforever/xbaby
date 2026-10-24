@@ -17,7 +17,7 @@ DEFAULT = {
     'start_date': '2026-10-23', 'run_time': '21:30', 'max_days_per_run': 7,
     'model_base_url': '', 'model_name': '', 'model_max_tokens': 14000, 'model_batch_size': 3,
     'cos_region': '', 'cos_bucket': '', 'link_hours': 72,
-    'pdf_host': 'cos', 'repo_pdf_base_url': '',
+    'pdf_host': 'cos', 'repo_pdf_base_url': '', 'repo_cdn_base_url': '',
     'upload_enabled': False, 'push_enabled': False,
     'font_path': 'C:/Windows/Fonts/simhei.ttf',
 }
@@ -37,6 +37,8 @@ def load_config(root=ROOT):
         config.update(json.loads(p.read_text(encoding='utf-8-sig')))
     if os.environ.get('NEWSSTUDY_REPO_PDF_BASE_URL'):
         config['repo_pdf_base_url'] = os.environ['NEWSSTUDY_REPO_PDF_BASE_URL']
+    if os.environ.get('NEWSSTUDY_REPO_CDN_BASE_URL'):
+        config['repo_cdn_base_url'] = os.environ['NEWSSTUDY_REPO_CDN_BASE_URL']
     return config
 
 def validate_config(c):

@@ -42,6 +42,7 @@ jobs:
           NEWSSTUDY_MODEL_API_KEY: ${{ secrets.NEWSSTUDY_MODEL_API_KEY }}
           NEWSSTUDY_SERVERCHAN_SENDKEY: ${{ secrets.NEWSSTUDY_SERVERCHAN_SENDKEY }}
           NEWSSTUDY_REPO_PDF_BASE_URL: https://github.com/${{ github.repository }}/blob/HEAD
+          NEWSSTUDY_REPO_CDN_BASE_URL: https://cdn.jsdelivr.net/gh/${{ github.repository }}@main
         run: |
           if [ -n "${{ github.event.inputs.date }}" ]; then
             python -m newsstudy run --date "${{ github.event.inputs.date }}"
