@@ -67,8 +67,9 @@ def analyze(raw, config, secrets, log=print):
     system = (ROOT / 'prompts/analysis.txt').read_text(encoding='utf-8')
     all_items = []
     # Keep long speeches intact; small batches avoid silently dropping the end of a broadcast.
-    for i in range(0, len(raw['articles']), 3):
-        batch = raw['articles'][i:i+3]
+    size = max(1, int(config.get('model_batch_size', 3)))
+    for i in range(0, len(raw['articles']), size):
+        batch = raw['articles'][i:i+size]
         log(f'AI 分析：{i+1} 至 {i+len(batch)} / {len(raw["articles"])} 条')
         messages = [{'role': 'system', 'content': system}, {'role': 'user', 'content': json.dumps(
             {'date': raw['date'], 'profile': profile, 'articles': batch}, ensure_ascii=False)}]

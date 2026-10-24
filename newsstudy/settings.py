@@ -15,7 +15,7 @@ def now():
 
 DEFAULT = {
     'start_date': '2026-10-23', 'run_time': '21:30', 'max_days_per_run': 7,
-    'model_base_url': '', 'model_name': '', 'model_max_tokens': 14000,
+    'model_base_url': '', 'model_name': '', 'model_max_tokens': 14000, 'model_batch_size': 3,
     'cos_region': '', 'cos_bucket': '', 'link_hours': 72,
     'pdf_host': 'cos', 'repo_pdf_base_url': '',
     'upload_enabled': False, 'push_enabled': False,
@@ -44,6 +44,8 @@ def validate_config(c):
     datetime.strptime(c['run_time'], '%H:%M')
     if not 1 <= int(c['max_days_per_run']) <= 30:
         raise ValueError('单次补跑天数必须在 1 至 30 之间')
+    if not 1 <= int(c.get('model_batch_size', 3)) <= 5:
+        raise ValueError('单批分析条数必须在 1 至 5 之间')
     if not 1 <= int(c['link_hours']) <= 168:
         raise ValueError('链接有效期必须在 1 至 168 小时之间')
     if c['model_base_url']:
