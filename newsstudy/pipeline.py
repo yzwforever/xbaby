@@ -99,7 +99,13 @@ def digest_markdown(result, raw):
 def push_pending(state, config, secrets, log):
     if not config['push_enabled']:
         return
-    if not secrets.get('serverchan_sendkey'):
+    # SendKey 支持逗号分隔的多人列表：每个 Key 对应一个人的微信（各自扫码获取）。
+    keys = secrets.get('serverchan_sendkey')
+    if isinstance(keys, str):
+        keys = [k.strip() for k in keys.split(',') if k.strip()]
+    elif not isinstance(keys, list):
+        keys = []
+    if not keys:
         log('待配置微信 SendKey，已保留本地报告和上传记录')
         return
     eligible = [r for r in reversed(state.all()) if r['status'] == 'uploaded' and r['notified'] == 0]
@@ -150,8 +156,16 @@ def push_pending(state, config, secrets, log):
             state.db.execute('UPDATE days SET notified=2 WHERE day=?', (d,))
         state.db.commit()
         try:
-            delivery.send_wechat(f'新闻联播备考日报 | {days[-1]}' + (f' 等{len(days)}期' if len(days)>1 else ''),
-                                 '\n\n---\n\n'.join(body), secrets['serverchan_sendkey'])
+            title = f'新闻联播备考日报 | {days[-1]}' + (f' 等{len(days)}期' if len(days) > 1 else '')
+            content = '\n\n---\n\n'.join(body)
+            failed = 0
+            for key in keys:
+                try:
+                    delivery.send_wechat(title, content, key)
+                except Exception:
+                    failed += 1
+            if failed:
+                raise RuntimeError(f'{failed}/{len(keys)} 个接收人未确认送达')
         except Exception:
             log('推送结果待核对：请查看手机或Server酱后台，再在界面选择“已收到”或“允许重试”。批次 ' + str(oid))
             continue
@@ -159,7 +173,7 @@ def push_pending(state, config, secrets, log):
         for d in days:
             state.db.execute('UPDATE days SET notified=1 WHERE day=?', (d,))
         state.db.commit()
-        log('微信服务已接受推送：' + '、'.join(days))
+        log('微信服务已接受推送（' + str(len(keys)) + ' 个接收人）：' + '、'.join(days))
 
 def resolve_notifications(root, received):
     state = State(root)

@@ -28,7 +28,7 @@
    首次 push 前确认没有把 config.json、secrets.dat、logs 一起提交（.gitignore 已排除）。
 3. 仓库 Settings → Secrets and variables → Actions，添加两个 Secret：
    - `NEWSSTUDY_MODEL_API_KEY`：模型 API Key
-   - `NEWSSTUDY_SERVERCHAN_SENDKEY`：Server酱 SendKey（https://sct.ftqq.com 扫码获取）
+   - `NEWSSTUDY_SERVERCHAN_SENDKEY`：Server酱 SendKey（https://sct.ftqq.com 扫码获取）。**多人推送**：每个接收人自己扫码获取 SendKey 给你，多个 Key 用英文逗号分隔填入同一个 Secret，每天各自微信都会收到。
 4. 编辑 `config.actions.json`，填写两个模型字段并提交推送（不含密钥）：
    - DeepSeek：`https://api.deepseek.com/v1` + `deepseek-chat`
    - 智谱 GLM：`https://open.bigmodel.cn/api/paas/v4` + 模型名如 `glm-4.5`

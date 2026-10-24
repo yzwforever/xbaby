@@ -219,5 +219,17 @@ class PipelineTests(unittest.TestCase):
                 pipeline.run(self.root,DAY,lambda s:None)
                 republish.assert_not_called()
             self.assertEqual(send.call_count,1)
+    def test_multiple_sendkeys_each_get_push(self):
+        self.config.update({'pdf_host':'repo','repo_pdf_base_url':'https://github.com/u/r/blob/HEAD'})
+        atomic_json(self.root/'config.json',self.config)
+        self.secrets['serverchan_sendkey']='SCTa,SCTb'
+        with patch('newsstudy.pipeline.load_secrets',return_value=self.secrets), \
+             patch('newsstudy.pipeline.collect',return_value=raw_news()), \
+             patch('newsstudy.analysis.analyze',return_value=result()), \
+             patch('newsstudy.report.render',side_effect=self.fake_render), \
+             patch('newsstudy.delivery.send_wechat',return_value=True) as send:
+            self.assertTrue(pipeline.run(self.root,DAY,lambda s:None))
+            self.assertEqual(send.call_count,2)
+            self.assertEqual([c.args[2] for c in send.call_args_list],['SCTa','SCTb'])
 
 if __name__ == '__main__': unittest.main()
