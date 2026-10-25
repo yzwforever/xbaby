@@ -96,7 +96,9 @@ def digest_markdown(result, raw):
             out.append(f"  - {s['practice']}")
     return '\n\n'.join(out)
 
-def push_pending(state, config, secrets, log):
+def push_pending(state, config, secrets, log, persist=None):
+    persist = persist or (lambda state: None)
+    complete = True
     if not config['push_enabled']:
         return
     # SendKey 支持逗号分隔的多人列表：每个 Key 对应一个人的微信（各自扫码获取）。
@@ -108,14 +110,37 @@ def push_pending(state, config, secrets, log):
     if not keys:
         log('待配置微信 SendKey，已保留本地报告和上传记录')
         return
-    eligible = [r for r in reversed(state.all()) if r['status'] == 'uploaded' and r['notified'] == 0]
+    keys = list(dict.fromkeys(keys))
+    eligible = [r for r in reversed(state.all()) if r['status'] == 'uploaded' and r['notified'] != 1]
     # 每天单独一条完整日报消息。Server酱免费额度每人每天5条：单轮最多补发4天，其余下一轮触发再发。
-    for row in eligible[:4]:
+    attempted_days = 0
+    for row in eligible:
+        recipient_ids = [state.recipient_id(key) for key in keys]
+        known = [state.recipient_status(row['day'], rid) for rid in recipient_ids]
+        if row['notified'] == 2 and not any(known):
+            log(row['day'] + ' 历史推送结果待核对，未自动重发')
+            complete = False
+            continue
+        if all(status == 'sent' for status in known):
+            state.put(row['day'], notified=1)
+            persist(state)
+            continue
+        if not any(status in (None, 'retry-approved') for status in known):
+            complete = False
+            continue
+        if attempted_days >= 4:
+            continue
+        if not row['url']:
+            log(row['day'] + ' 下载链接尚未准备好，未发送')
+            complete = False
+            continue
         # COS 链接带过期时间，临期则跳过等重签；仓库托管链接 expires 为空=长期有效。
         expired = bool(row['expires']) and datetime.fromisoformat(row['expires']) <= now()+timedelta(minutes=10)
         if expired:
             log(row['day'] + ' 下载链接已过期，等待下一轮重新签名')
+            complete = False
             continue
+        attempted_days += 1
         folder = Path(row['pdf']).parent
         result = json.loads((folder / 'analysis.json').read_text(encoding='utf-8'))
         raw = json.loads((folder / 'source.json').read_text(encoding='utf-8'))
@@ -139,41 +164,61 @@ def push_pending(state, config, secrets, log):
         body = (f'## {row["day"]} 新闻联播\n\n{content}\n\n---\n\n{links}\n\n'
                 f'{expiry}考试关联仅供复习。')
         title = f'新闻联播备考日报 | {row["day"]}'
-        # Persist ambiguity BEFORE network. If process dies after server accepted,
-        # user resolves status; do not silently duplicate external messages.
-        cur = state.db.execute('INSERT INTO outbox(days,status,updated) VALUES(?,?,?)',
-                               (json.dumps([row['day']]), 'uncertain', now().isoformat()))
-        oid = cur.lastrowid
-        state.db.execute('UPDATE days SET notified=2 WHERE day=?', (row['day'],))
-        state.db.commit()
-        try:
-            failed = 0
-            for key in keys:
-                try:
-                    delivery.send_wechat(title, body, key)
-                except Exception:
-                    failed += 1
-            if failed:
-                raise RuntimeError(f'{failed}/{len(keys)} 个接收人未确认送达')
-        except Exception:
-            log('推送结果待核对：请查看手机或Server酱后台，再在界面选择“已收到”或“允许重试”。批次 ' + str(oid))
-            continue
-        state.db.execute('UPDATE outbox SET status=?,updated=? WHERE id=?', ('sent', now().isoformat(), oid))
-        state.db.execute('UPDATE days SET notified=1 WHERE day=?', (row['day'],))
-        state.db.commit()
-        log('微信服务已接受推送（' + str(len(keys)) + ' 个接收人）：' + row['day'])
+        for key, rid in zip(keys, recipient_ids):
+            status = state.recipient_status(row['day'], rid)
+            if status in ('sent', 'uncertain'):
+                continue
+            state.mark_recipient(row['day'], rid, 'uncertain')
+            persist(state)  # Remote confirmation BEFORE network is mandatory in Actions.
+            try:
+                delivery.send_wechat(title, body, key)
+            except Exception:
+                log(row['day'] + ' 接收人 ' + rid[:12] + ' 结果待核对，未自动重试')
+            else:
+                state.mark_recipient(row['day'], rid, 'sent')
+            persist(state)  # Failure leaves remote uncertain; never resend automatically.
+        statuses = [state.recipient_status(row['day'], rid) for rid in recipient_ids]
+        accepted = all(status == 'sent' for status in statuses)
+        state.put(row['day'], notified=1 if accepted else 2)
+        persist(state)
+        if accepted:
+            log('微信服务已接受推送（' + str(len(keys)) + ' 个接收人）：' + row['day'])
+        else:
+            complete = False
+    return complete
 
-def resolve_notifications(root, received):
+def resolve_notifications(root, received, day=None, recipient=None, persist=None):
+    with single_instance(root):
+        return _resolve_notifications(root, received, day, recipient, persist)
+
+def _resolve_notifications(root, received, day, recipient, persist):
     state = State(root)
     try:
         status = 'sent' if received else 'retry-approved'
+        where, params = "status='uncertain'", []
+        if day:
+            where += ' AND day=?'; params.append(day)
+        if recipient:
+            where += ' AND recipient=?'; params.append(recipient)
+        affected = [r[0] for r in state.db.execute('SELECT DISTINCT day FROM recipients WHERE ' + where, params)]
         with state.db:
-            state.db.execute('UPDATE days SET notified=? WHERE notified=2', (1 if received else 0,))
+            state.db.execute('UPDATE recipients SET status=? WHERE ' + where, [status, *params])
+            for d in affected:
+                remaining = state.db.execute("SELECT 1 FROM recipients WHERE day=? AND status!='sent'", (d,)).fetchone()
+                state.db.execute('UPDATE days SET notified=? WHERE day=?', (2 if remaining else 1, d))
+            if not recipient:
+                sql = 'UPDATE days SET notified=? WHERE notified=2 AND day NOT IN (SELECT day FROM recipients)'
+                args = [1 if received else 0]
+                if day:
+                    sql += ' AND day=?'; args.append(day)
+                state.db.execute(sql, args)
             state.db.execute('UPDATE outbox SET status=?,updated=? WHERE status=?', (status, now().isoformat(), 'uncertain'))
+        if persist:
+            persist(state)
     finally:
         state.close()
 
-def run(root=ROOT, day=None, log=None):
+def run(root=ROOT, day=None, log=None, persist=None):
     log = log or (lambda s: log_line(s, root))
     config, secrets = load_config(root), load_secrets(root)
     validate_config(config)
@@ -192,7 +237,7 @@ def run(root=ROOT, day=None, log=None):
                 needs = not row or row['status'] not in ('rendered', 'uploaded')
                 if row and row['status'] == 'rendered' and config['upload_enabled']:
                     needs = True
-                if row and row['status'] == 'uploaded' and row['notified'] == 0 and config['push_enabled']:
+                if row and row['status'] == 'uploaded' and row['notified'] != 1 and config['push_enabled']:
                     # COS 链接过期需重新签名；仓库托管链接永久有效，无需重发。
                     needs = not row['url'] or (bool(row['expires']) and
                            datetime.fromisoformat(row['expires']) <= now()+timedelta(minutes=10))
@@ -226,6 +271,8 @@ def run(root=ROOT, day=None, log=None):
                             state.put(d, status='uploaded', url=url, error='')
                             log(d + ' PDF 已发布到仓库 public/ 目录')
                         else:
+                            if config.get('repo_pdf_base_url'):
+                                delivery.publish_repo_pdf(pdf, d, config, root)
                             url = delivery.upload_pdf(pdf, d, config, secrets)
                             expires = now()+timedelta(hours=int(config['link_hours']))
                             state.put(d, status='uploaded', url=url, expires=expires.isoformat(), error='')
@@ -243,7 +290,10 @@ def run(root=ROOT, day=None, log=None):
                     row = state.get(d)
                     state.put(d, status=(row['status'] if row and row['status'] in ('rendered', 'uploaded') else 'pending'), error=safe[:240])
                     log(d + ' 待重试：' + safe[:240])
-            push_pending(state, config, secrets, log)
+            if push_pending(state, config, secrets, log, persist) is False:
+                failed = True
+            if persist:
+                persist(state)
             log('本轮结束。' + ('部分日期待重试。' if failed else ''))
             return not failed
         finally:

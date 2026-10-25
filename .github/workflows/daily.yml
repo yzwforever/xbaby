@@ -14,7 +14,7 @@ on:
         required: false
         default: ''
       test_push:
-        description: '只发测试消息（不生成日报）'
+        description: '只检查推送配置（不发送微信、不生成日报）'
         type: boolean
         required: false
         default: false
@@ -30,8 +30,14 @@ jobs:
   daily:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      NEWSSTUDY_REMOTE_PERSIST: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.NEWSSTUDY_PUSH_PAT || github.token }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -52,32 +58,31 @@ jobs:
             val="${!v}"
             if [ -n "$val" ]; then echo "$v: 已配置（${#val} 字符）"; else echo "$v: 【空！未取到】"; fi
           done
-      - name: 测试推送（仅手动勾选时）
+      - name: 配置提交身份
+        run: |
+          git config user.name "newsstudy-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: 恢复并确认远端投递状态
+        id: prepare
+        if: github.event.inputs.test_push != 'true'
+        run: python -m newsstudy prepare-state
+      - name: 检查推送配置（不发送）
         if: github.event.inputs.test_push == 'true'
         env:
           KEYS: ${{ secrets.NEWSSTUDY_SERVERCHAN_SENDKEY }}
         run: |
           python - <<'EOF'
-          import os, sys
-          from newsstudy import delivery
+          import os, re
           keys = [k.strip() for k in os.environ.get('KEYS', '').split(',') if k.strip()]
-          if not keys:
-              print('未配置 NEWSSTUDY_SERVERCHAN_SENDKEY'); sys.exit(1)
-          failed = 0
-          for k in keys:
-              try:
-                  delivery.send_wechat('新闻联播日报·测试', '收到这条消息说明微信推送已配置成功。', k)
-                  print('OK:', k[:10] + '…')
-              except Exception as e:
-                  failed += 1
-                  print('FAIL:', k[:10] + '…', e)
-          print(f'共 {len(keys)} 个接收人，失败 {failed} 个')
-          sys.exit(1 if failed else 0)
+          if not keys or any(not re.fullmatch(r'SCT[A-Za-z0-9]+|sctp\d+t[A-Za-z0-9]+', k) for k in keys):
+              raise SystemExit('推送配置缺失或格式无效（不显示内容）')
+          print(f'配置格式有效，共 {len(set(keys))} 个接收人；未发送微信。')
           EOF
       - name: 生成日报
         if: github.event.inputs.test_push != 'true'
         id: run
         env:
+          REQUESTED_DATE: ${{ inputs.date }}
           NEWSSTUDY_MODEL_API_KEY: ${{ secrets.NEWSSTUDY_MODEL_API_KEY }}
           NEWSSTUDY_SERVERCHAN_SENDKEY: ${{ secrets.NEWSSTUDY_SERVERCHAN_SENDKEY }}
           NEWSSTUDY_COS_SECRET_ID: ${{ secrets.NEWSSTUDY_COS_SECRET_ID }}
@@ -85,30 +90,17 @@ jobs:
           NEWSSTUDY_REPO_PDF_BASE_URL: https://github.com/${{ github.repository }}/blob/HEAD
           NEWSSTUDY_REPO_CDN_BASE_URL: https://cdn.jsdelivr.net/gh/${{ github.repository }}@main
         run: |
-          if [ -n "${{ github.event.inputs.date }}" ]; then
-            python -m newsstudy run --date "${{ github.event.inputs.date }}"
+          if [ -n "$REQUESTED_DATE" ]; then
+            python -m newsstudy run --date "$REQUESTED_DATE"
           else
             python -m newsstudy run
           fi
-      # 即使上一步失败也提交已完成的采集数据，下一轮触发时从这里续跑
-      - name: 提交采集数据、状态与 PDF
-        if: always()
+      # 不提交 SQLite、锁文件或日志；失败后仍保存已产生的安全记录。
+      - name: 保存日报产物与安全投递状态
+        if: always() && !cancelled() && steps.prepare.outcome == 'success'
         env:
-          NEWSSTUDY_PUSH_PAT: ${{ secrets.NEWSSTUDY_PUSH_PAT }}
-        run: |
-          git config user.name "newsstudy-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f data output public || true
-          git reset -q data/run.lock || true
-          if git diff --cached --quiet; then echo '没有需要提交的变更'; exit 0; fi
-          git commit -m "daily: $(date -u +'%Y-%m-%d %H:%M') UTC"
-          echo '--- 推送前状态 ---'
-          git log --oneline -2
-          git pull --no-rebase -q origin main || echo '拉取远端更新失败（继续尝试推送）'
-          if [ -n "$NEWSSTUDY_PUSH_PAT" ]; then
-            echo '使用个人访问令牌推送'
-            git push "https://x-access-token:${NEWSSTUDY_PUSH_PAT}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main \
-              || { echo '!!! PAT 推送失败 !!!'; git status -sb; exit 1; }
-          else
-            git push || { echo '!!! 默认令牌推送失败（考虑配置 NEWSSTUDY_PUSH_PAT）!!!'; git status -sb; exit 1; }
-          fi
+          NEWSSTUDY_COS_SECRET_ID: ${{ secrets.NEWSSTUDY_COS_SECRET_ID }}
+          NEWSSTUDY_COS_SECRET_KEY: ${{ secrets.NEWSSTUDY_COS_SECRET_KEY }}
+          NEWSSTUDY_MODEL_API_KEY: ${{ secrets.NEWSSTUDY_MODEL_API_KEY }}
+          NEWSSTUDY_SERVERCHAN_SENDKEY: ${{ secrets.NEWSSTUDY_SERVERCHAN_SENDKEY }}
+        run: python -m newsstudy sync-state

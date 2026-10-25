@@ -37,8 +37,11 @@ def upload_pdf(path, day, config, secrets):
         url = client.get_presigned_download_url(Bucket=config['cos_bucket'], Key=key,
                                                 Expired=int(config['link_hours'])*3600)
     except Exception as e:
-        # COS SDK 的错误信息只含错误码/请求ID，不含密钥，可以安全记录用于排查
-        detail = f'{type(e).__name__}: {str(e)[:180]}'
+        # SDK exceptions can include signed URLs / identifiers. Never store str(e).
+        code = e.get_error_code() if callable(getattr(e, 'get_error_code', None)) else ''
+        safe_codes = {'NoSuchBucket', 'AccessDenied', 'InvalidAccessKeyId', 'SignatureDoesNotMatch',
+                      'RequestTimeTooSkewed', 'NoSuchKey'}
+        detail = code if code in safe_codes else '服务或网络异常'
         raise RuntimeError(f'COS 上传或生成链接失败（{detail}）；本地PDF不会丢失') from None
     return url
 

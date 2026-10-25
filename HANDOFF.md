@@ -7,7 +7,7 @@
 
 「新闻联播备考日报」：每天自动抓取央视《新闻联播》逐条文字稿 → DeepSeek 分析（重要性排序、分点总结、领导人讲话摘录+马克思主义原理映射、考研政治701/870/公共课与省考事业编关联、自拟练习）→ 生成带视频时间戳的中文 PDF → 上传腾讯云 COS → 通过 Server酱 推送到多个接收人的微信（消息内嵌完整日报正文）。
 
-- **运行方式**：GitHub Actions 每天北京时间 21:30 / 22:35 / 23:35 三次触发（幂等，已完成的日期跳过），也支持手动 Run workflow（可指定日期、可勾选"只发测试消息"）
+- **运行方式**：GitHub Actions 每天北京时间 21:30 / 22:35 / 23:35 三次触发（幂等，已完成的日期跳过），也支持手动 Run workflow（可指定日期、可勾选“只检查推送配置”）
 - **本地目录** `F:\新闻联播` 是同一份代码的开发副本；本地还有一套 tkinter GUI（`python -m newsstudy gui`），线上不用
 - **GitHub 仓库**：`yzwforever/xbaby`（Public，Private 会让 PDF 链接打不开）
 
@@ -33,30 +33,35 @@
   → delivery.publish/upload → COS 签名直链（国内秒开）+ 仓库 public/pdf/ 永久存档
   → pipeline.push_pending：每天一条完整日报消息（速读/讲话/考点内嵌正文，
       超30000字节退回要点版），多 SendKey 群发，微信消息里另有 GitHub 备用链接
-  → data/state.sqlite3 记录状态（幂等/防重复推送的关键）
+  → 本地 data/state.sqlite3 + 远端 data/delivery-state.json（逐接收人投递账本）
 ```
 
-## 四、当前未完成事项 ⚠️
+## 四、2026-10-25 修复：推送保护、远端屏障与逐人状态
 
-**Actions 的「提交采集数据、状态与 PDF」步骤推送失败**（约 2026-10-25 00:18 起）：
+实际失败证据：Actions run 40113929884 / job 120931188003，GitHub 返回 GH013 / GITHUB PUSH PROTECTION，指出 data/state.sqlite3 含 Tencent Cloud Secret ID。日志同时明确 Contents: write。此前“改权限或换 PAT”的推测不能解释此次拒绝；不要绕过推送保护。
 
-- 症状：管线本身全部成功（抓取/分析/COS上传/微信推送都好），只有最后把结果 commit 回仓库的 `git push` 失败，导致状态不持久化 → 每次重跑会重复推送微信
-- 已排查：本地完全复现提交流程无问题（add/commit/dry-run 全过）；工作流 `permissions: contents: write` 存在；非快进冲突已用 pull 兜底
-- 待办（二选一，已告知用户）：
-  1. 检查仓库 Settings → Actions → General → **Workflow permissions** 是否被改成只读（若是→改回 Read and write）
-  2. 或创建 PAT（classic，public_repo 权限）存为 Secret `NEWSSTUDY_PUSH_PAT`——工作流已支持，检测到该 Secret 即自动改用 PAT 推送
-- 排查手段：run 的 jobs API 看 steps 结论（匿名可查，注意 60次/小时限流）；真实错误在 Actions 日志的「!!!」行附近；本机直连 github 会断，git 已配置走本机代理 127.0.0.1:7897
+原因：COS 下载签名含 Secret ID，原流程将完整签名 URL 写入 SQLite，然后强制提交数据库。现在 SQLite 仅保留在本机/当前 runner；远端只保存 data/delivery-state.json 的白名单字段（日期、阶段、通知汇总、SHA-256 接收人指纹、逐人投递状态）。快照不含 URL、错误文本、SendKey、密钥或本机路径。
+
+- 新增 newsstudy/persistence.py：只暂存白名单日报产物；从 Git 索引移除 SQLite/边车/锁；扫描产物中配置密钥、签名和 Secret ID；固定 main，拒绝旧基线、非快进和混入暂存区的代码。普通 push 后还须读回远端 HEAD 确认。不会强推、自动合并状态或覆盖并发更新。
+- daily.yml：checkout main + 完整历史；可选 PAT 在 checkout 时统一配置认证，未设置则用 github.token，不把 Token 拼进 URL。先 prepare-state，发消息前保存 uncertain、收到服务确认后保存 sent，最后 sync-state。远端不可达或拒绝提交时停止发送。
+- pipeline.py/state.py：按日期+接收人指纹保存 uncertain/sent/retry-approved；成功的人不重发，不确定的人须人工核对；GUI 原有两项核对按钮仍可用，命令行支持按日期/指纹核对。
+- COS 错误只保留已知错误码，不再保存 SDK 原始异常文字。COS 模式也归档 PDF 到 public/pdf，备用链接在发送前随屏障提交。
+- 工作流旧 test_push 输入改为仅检查 SendKey 格式和人数，**不会发送真实测试消息**。
+
+首次迁移：数据库中的已生成日期及已存在的日报，若没有可信投递记录则保守标记为待核对，禁止自动补发。2026-10-23/24 在失败运行日志中显示服务已接受；应核对手机后再人工确认，不能仅因数据库显示未发送就重发。
+
+恢复方法详见 README 的“远端投递恢复”。不要在工作副本 main 落后远端时运行同步命令；先更新代码。不要盲目更换 SendKey 后批准重试。尚不能保证网络层严格一次：发前记录成功、发请求前被终止会导致漏发；必须核对后批准重试。
 
 ## 五、常见问题排查手册
 
-- **红叉先看是哪一步**：Actions → 运行 → daily → 看步骤列表。只有最后一步红=推送问题（见上）；「生成日报」红=看日志错误文字（现在 COS 错误带真实错误码）
+- **红叉先看是哪一步**：Actions → 运行 → daily → 看步骤列表。同步步骤红=先查推送保护、权限、远端基线或网络（见上）；「生成日报」红=看日志错误文字（COS 只记录白名单错误码）
 - **「尚未配置模型API」**：config.actions.json 的 model 字段或 Secret 缺失（工作流有「密钥自检」步骤，四个都应显示"已配置"）
 - **NoSuchBucket**：桶名/地域与腾讯云控制台不符
 - **讲话校验失败**：正常反幻觉机制，三次失败自动降级，不用管
 - **当天 21:30 没推送**：GitHub 定时器延迟 10-30 分钟常见；后面两轮会补；文字稿未上齐不算失败
 - **重复收到微信消息**：说明状态没存回仓库（提交步骤失败的副作用）
 - **本地推送 GitHub 失败**：开代理软件（端口7897），git 已配 `http.https://github.com.proxy`
-- **测试 27 个**：`python -m unittest discover -s tests`（用 Codex 自带 Python 或 .venv）
+- **回归测试**：`python -m unittest discover -s tests`（用 Codex 自带 Python 或 .venv）
 
 ## 六、设计决策备忘（为什么这么做）
 
@@ -68,6 +73,6 @@
 
 ## 七、给 AI 维护者的提示
 
-- 代码在 `newsstudy/`（Python 标准库为主 + reportlab + cos sdk），测试 `tests/test_core.py` 27 个，改动后必须跑
+- 代码在 `newsstudy/`（Python 标准库为主 + reportlab + cos sdk），测试 `tests/test_core.py` 与 `tests/test_persistence.py`，改动后必须跑
 - `git pull` 后再 push（Actions 机器人会往 main 提交数据）；本机 git 走代理
 - 用户是非技术用户，沟通要给逐步点击级指引，结论要说人话
