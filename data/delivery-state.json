@@ -10,7 +10,18 @@
       "day": "2026-10-23",
       "status": "uploaded",
       "notified": 2
+    },
+    {
+      "day": "2026-10-22",
+      "status": "uploaded",
+      "notified": 2
     }
   ],
-  "recipients": []
+  "recipients": [
+    {
+      "day": "2026-10-22",
+      "recipient": "5f5afdff01bbe6d82c3a52f409f356fd1845355f836c6dadd5f78a7e0a137baa",
+      "status": "uncertain"
+    }
+  ]
 }
