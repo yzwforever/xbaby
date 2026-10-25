@@ -3,12 +3,12 @@
   "days": [
     {
       "day": "2026-10-24",
-      "status": "rendered",
+      "status": "uploaded",
       "notified": 2
     },
     {
       "day": "2026-10-23",
-      "status": "rendered",
+      "status": "uploaded",
       "notified": 2
     }
   ],
