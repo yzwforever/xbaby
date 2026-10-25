@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "days": [
+    {
+      "day": "2026-10-24",
+      "status": "rendered",
+      "notified": 2
+    },
+    {
+      "day": "2026-10-23",
+      "status": "rendered",
+      "notified": 2
+    }
+  ],
+  "recipients": []
+}
