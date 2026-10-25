@@ -96,21 +96,30 @@ def digest_markdown(result, raw):
             out.append(f"  - {s['practice']}")
     return '\n\n'.join(out)
 
-def push_pending(state, config, secrets, log, persist=None):
-    persist = persist or (lambda state: None)
-    complete = True
-    if not config['push_enabled']:
-        return
+def configured_sendkeys(secrets):
     # SendKey 支持逗号分隔的多人列表：每个 Key 对应一个人的微信（各自扫码获取）。
     keys = secrets.get('serverchan_sendkey')
     if isinstance(keys, str):
         keys = [k.strip() for k in keys.split(',') if k.strip()]
     elif not isinstance(keys, list):
         keys = []
+    return list(dict.fromkeys(keys))
+
+def has_sendable_recipient(state, row, keys):
+    statuses = [state.recipient_status(row['day'], state.recipient_id(key)) for key in keys]
+    if row['notified'] == 2 and not any(statuses):
+        return False  # Legacy ambiguity cannot be resolved by an automatic run.
+    return any(status in (None, 'retry-approved') for status in statuses)
+
+def push_pending(state, config, secrets, log, persist=None):
+    persist = persist or (lambda state: None)
+    complete = True
+    if not config['push_enabled']:
+        return
+    keys = configured_sendkeys(secrets)
     if not keys:
         log('待配置微信 SendKey，已保留本地报告和上传记录')
         return
-    keys = list(dict.fromkeys(keys))
     eligible = [r for r in reversed(state.all()) if r['status'] == 'uploaded' and r['notified'] != 1]
     # 每天单独一条完整日报消息。Server酱免费额度每人每天5条：单轮最多补发4天，其余下一轮触发再发。
     attempted_days = 0
@@ -119,14 +128,13 @@ def push_pending(state, config, secrets, log, persist=None):
         known = [state.recipient_status(row['day'], rid) for rid in recipient_ids]
         if row['notified'] == 2 and not any(known):
             log(row['day'] + ' 历史推送结果待核对，未自动重发')
-            complete = False
             continue
         if all(status == 'sent' for status in known):
             state.put(row['day'], notified=1)
             persist(state)
             continue
         if not any(status in (None, 'retry-approved') for status in known):
-            complete = False
+            log(row['day'] + ' 历史推送结果待核对，未自动重发')
             continue
         if attempted_days >= 4:
             continue
@@ -173,6 +181,7 @@ def push_pending(state, config, secrets, log, persist=None):
             try:
                 delivery.send_wechat(title, body, key)
             except Exception:
+                complete = False  # A NEW failed attempt is an operational failure.
                 log(row['day'] + ' 接收人 ' + rid[:12] + ' 结果待核对，未自动重试')
             else:
                 state.mark_recipient(row['day'], rid, 'sent')
@@ -184,7 +193,7 @@ def push_pending(state, config, secrets, log, persist=None):
         if accepted:
             log('微信服务已接受推送（' + str(len(keys)) + ' 个接收人）：' + row['day'])
         else:
-            complete = False
+            log(row['day'] + ' 仍有历史推送结果待核对，已跳过相应接收人')
     return complete
 
 def resolve_notifications(root, received, day=None, recipient=None, persist=None):
@@ -239,8 +248,9 @@ def run(root=ROOT, day=None, log=None, persist=None):
                     needs = True
                 if row and row['status'] == 'uploaded' and row['notified'] != 1 and config['push_enabled']:
                     # COS 链接过期需重新签名；仓库托管链接永久有效，无需重发。
-                    needs = not row['url'] or (bool(row['expires']) and
-                           datetime.fromisoformat(row['expires']) <= now()+timedelta(minutes=10))
+                    needs = has_sendable_recipient(state, row, configured_sendkeys(secrets)) and (
+                        not row['url'] or (bool(row['expires']) and
+                        datetime.fromisoformat(row['expires']) <= now()+timedelta(minutes=10)))
                 if row and row['pdf'] and not Path(row['pdf']).is_file():
                     needs = True
                 if needs:

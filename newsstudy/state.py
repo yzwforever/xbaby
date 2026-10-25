@@ -8,6 +8,7 @@ class State:
     def __init__(self, root):
         self.root = Path(root).resolve()
         p = self.root / 'data/state.sqlite3'
+        fresh = not p.exists()
         p.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(p)
         self.db.row_factory = sqlite3.Row
@@ -23,6 +24,13 @@ class State:
             PRIMARY KEY(day, recipient));
         ''')
         self.db.commit()
+        if (fresh or not self.db.execute('SELECT 1 FROM days LIMIT 1').fetchone()) and (self.root / 'data/delivery-state.json').is_file():
+            # A fresh checkout/GUI must honor the same durable delivery holds.
+            try:
+                self.restore_public()
+            except Exception:
+                self.db.close()
+                raise
     def close(self):
         self.db.close()
     def get(self, day):

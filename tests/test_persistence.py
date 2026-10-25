@@ -73,7 +73,7 @@ class DeliverySafetyTests(unittest.TestCase):
         for day in ('2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04'):
             self.state.put(day, status='uploaded', notified=2)
         with patch('newsstudy.delivery.send_wechat', return_value=True) as send:
-            self.assertFalse(self.push())  # Old dates still require attention.
+            self.assertTrue(self.push())  # A historical hold is not a new failure.
             self.assertEqual(send.call_count, 2)
         self.assertEqual(self.state.get(DAY)['notified'], 1)
 
@@ -85,11 +85,19 @@ class DeliverySafetyTests(unittest.TestCase):
                     json.loads((self.root / 'data/delivery-state.json').read_text()))
         other = State(other_root)
         try:
+            self.assertIsNotNone(other.get(DAY))  # Automatic restore also protects GUI.
             other.restore_public()
             self.assertEqual(Path(other.get(DAY)['pdf']), other_root / 'output/pdf' / DAY / 'report.pdf')
             self.assertEqual(other.get(DAY)['url'], '')
         finally:
             other.close()
+
+    def test_invalid_snapshot_blocks_each_fresh_database_open(self):
+        other_root = self.root / 'invalid-checkout'
+        atomic_json(other_root / 'data/delivery-state.json', {'version': 999})
+        for _ in range(2):
+            with self.assertRaises(ValueError):
+                State(other_root)
 
     def test_remote_uncertain_exists_before_each_send(self):
         saved = []
@@ -136,7 +144,7 @@ class DeliverySafetyTests(unittest.TestCase):
     def test_partial_delivery_retry_only_retries_approved_recipient(self):
         with patch('newsstudy.delivery.send_wechat', side_effect=[True, TimeoutError]) as send:
             self.assertFalse(self.push())
-            self.assertFalse(self.push())
+            self.assertTrue(self.push())  # No new attempt: leave the hold, return success.
             self.assertEqual(send.call_count, 2)
         rid = self.state.recipient_id('SCTsecond')
         pipeline.resolve_notifications(self.root, False, DAY, rid)
@@ -161,8 +169,41 @@ class DeliverySafetyTests(unittest.TestCase):
     def test_legacy_missing_snapshot_requires_manual_resolution(self):
         self.state.restore_public()
         with patch('newsstudy.delivery.send_wechat') as send:
-            self.assertFalse(self.push())
+            self.assertTrue(self.push())
             send.assert_not_called()
+        self.assertEqual(self.state.get(DAY)['notified'], 2)
+
+    def test_historical_hold_run_succeeds_without_reupload_or_send(self):
+        atomic_json(self.root / 'config.json', {
+            **DEFAULT, 'start_date': DAY, 'model_base_url': 'https://fake.test/v1',
+            'model_name': 'fake', 'upload_enabled': True, 'push_enabled': True})
+        self.state.put(DAY, notified=2, url='')
+        with patch('newsstudy.pipeline.load_secrets', return_value={
+                    **self.keys, 'model_api_key': 'fake'}), \
+             patch('newsstudy.pipeline.collect') as collect, \
+             patch('newsstudy.delivery.upload_pdf') as upload, \
+             patch('newsstudy.delivery.send_wechat') as send:
+            self.assertTrue(pipeline.run(self.root, DAY, lambda s: None))
+            collect.assert_not_called()
+            upload.assert_not_called()
+            send.assert_not_called()
+        self.assertEqual(self.state.get(DAY)['notified'], 2)
+
+    def test_existing_recipient_holds_succeed_without_sending(self):
+        for key in ('SCTfirst', 'SCTsecond'):
+            self.state.mark_recipient(DAY, self.state.recipient_id(key), 'uncertain')
+        with patch('newsstudy.delivery.send_wechat') as send:
+            self.assertTrue(self.push())
+            send.assert_not_called()
+        self.assertEqual(self.state.get(DAY)['notified'], 2)
+
+    def test_partial_crash_still_sends_previously_unattempted_recipient(self):
+        self.state.mark_recipient(DAY, self.state.recipient_id('SCTfirst'), 'uncertain')
+        self.assertTrue(pipeline.has_sendable_recipient(self.state, self.state.get(DAY),
+                                                      ['SCTfirst', 'SCTsecond']))
+        with patch('newsstudy.delivery.send_wechat', return_value=True) as send:
+            self.assertTrue(self.push())
+            self.assertEqual([c.args[2] for c in send.call_args_list], ['SCTsecond'])
         self.assertEqual(self.state.get(DAY)['notified'], 2)
 
     def test_resolution_uses_same_single_instance_lock(self):
