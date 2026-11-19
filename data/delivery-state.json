@@ -2,6 +2,11 @@
   "version": 1,
   "days": [
     {
+      "day": "2026-11-19",
+      "status": "pending",
+      "notified": 0
+    },
+    {
       "day": "2026-11-18",
       "status": "uploaded",
       "notified": 1
